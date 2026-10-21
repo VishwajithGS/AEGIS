@@ -1,0 +1,83 @@
+{
+  "synthetic": true,
+  "generator": "aegis-sim-1.0",
+  "seed": 42,
+  "days": 2,
+  "step_minutes": 30,
+  "start_utc": "2026-10-12T18:30:00.000Z",
+  "end_utc": "2026-10-14T18:30:00.000Z",
+  "storms": 0,
+  "anomaly_rate": 0.05,
+  "files": {
+    "weather": "weather.jsonl",
+    "water_level": "water_level.jsonl",
+    "traffic": "traffic.jsonl",
+    "incidents": "incidents.jsonl"
+  },
+  "line_counts": {
+    "weather": 1170,
+    "water_level": 777,
+    "traffic": 2920,
+    "incidents": 84
+  },
+  "injected_anomalies": {
+    "duplicate": 67,
+    "invalid_coordinates": 23,
+    "invalid_type": 26,
+    "malformed_json": 27,
+    "missing_required": 45,
+    "out_of_range": 38,
+    "outside_study_region": 14,
+    "unknown_schema_version": 7
+  },
+  "flood_severity_label_counts": {
+    "Low": 11
+  },
+  "flood_severity_latent_quantiles": {
+    "p10": -0.069,
+    "p25": -0.0543,
+    "p50": -0.0258,
+    "p75": 0.0246,
+    "p90": 0.0332
+  },
+  "counts": {
+    "incidents.category.road_blockage": 2,
+    "incidents.category.structure_damage": 3,
+    "incidents.category.tree_fall": 1,
+    "incidents.category.waterlogging": 11,
+    "incidents.invalid_type": 1,
+    "incidents.lines": 84,
+    "incidents.out_of_range": 1,
+    "incidents.public_reports": 67,
+    "incidents.valid": 82,
+    "traffic.duplicate": 40,
+    "traffic.invalid_coordinates": 13,
+    "traffic.invalid_type": 14,
+    "traffic.lines": 2920,
+    "traffic.malformed_json": 19,
+    "traffic.missing_required": 26,
+    "traffic.out_of_range": 26,
+    "traffic.outside_study_region": 8,
+    "traffic.unknown_schema_version": 4,
+    "traffic.valid": 2770,
+    "water_level.duplicate": 9,
+    "water_level.invalid_coordinates": 4,
+    "water_level.invalid_type": 5,
+    "water_level.lines": 777,
+    "water_level.missing_required": 7,
+    "water_level.out_of_range": 4,
+    "water_level.outside_study_region": 1,
+    "water_level.valid": 747,
+    "weather.duplicate": 18,
+    "weather.invalid_coordinates": 6,
+    "weather.invalid_type": 6,
+    "weather.lines": 1170,
+    "weather.malformed_json": 8,
+    "weather.missing_required": 12,
+    "weather.out_of_range": 7,
+    "weather.outside_study_region": 5,
+    "weather.unknown_schema_version": 3,
+    "weather.valid": 1105
+  },
+  "label_rule": "producers.data_generator.severity_rule (synthetic labels; see docs/ml_model.md)"
+}

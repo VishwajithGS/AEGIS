@@ -1,0 +1,15 @@
+# Optional host (Windows) virtual environment: producers, backend without Spark
+# model inference, Kafka/HBase verification scripts and non-Spark unit tests.
+# Spark jobs run in the aegis-spark container (see docker/spark/Dockerfile).
+numpy==1.26.4
+pandas==2.2.3
+pyarrow==18.1.0
+pyyaml==6.0.3
+confluent-kafka==2.16.0
+happybase==1.3.0
+thriftpy2==0.7.1
+fastapi==0.151.0
+uvicorn==0.54.0
+pydantic==2.14.1
+httpx==0.28.1
+pytest==9.1.1

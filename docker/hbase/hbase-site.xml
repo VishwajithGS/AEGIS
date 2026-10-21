@@ -1,0 +1,55 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!-- Standalone HBase for the AEGIS local demonstration. Data lives in the
+     /data volume so tables survive container restarts. -->
+<configuration>
+  <property>
+    <name>hbase.cluster.distributed</name>
+    <value>false</value>
+  </property>
+  <property>
+    <name>hbase.rootdir</name>
+    <value>file:///data/hbase</value>
+  </property>
+  <property>
+    <name>hbase.zookeeper.property.dataDir</name>
+    <value>/data/zookeeper</value>
+  </property>
+  <property>
+    <!-- Local filesystem has no hflush/hsync capability; required for standalone mode. -->
+    <name>hbase.unsafe.stream.capability.enforce</name>
+    <value>false</value>
+  </property>
+  <!-- Tolerate long JVM/host pauses (laptops under memory pressure). Embedded ZooKeeper
+       caps sessions at 20 x tickTime; with the default 2 s tick a 42 s pause expired the
+       master's session during verification and HBase aborted. 6 s tick -> 120 s sessions. -->
+  <property>
+    <name>hbase.zookeeper.property.tickTime</name>
+    <value>6000</value>
+  </property>
+  <property>
+    <name>hbase.zookeeper.property.maxSessionTimeout</name>
+    <value>120000</value>
+  </property>
+  <property>
+    <name>zookeeper.session.timeout</name>
+    <value>120000</value>
+  </property>
+  <property>
+    <name>hbase.regionserver.thrift.port</name>
+    <value>9090</value>
+  </property>
+  <property>
+    <name>hbase.thrift.info.port</name>
+    <value>9095</value>
+  </property>
+  <property>
+    <!-- Keep idle Thrift client connections (dashboard, Spark sinks) open longer. -->
+    <name>hbase.thrift.server.socket.read.timeout</name>
+    <value>600000</value>
+  </property>
+  <property>
+    <name>hbase.thrift.connection.max-idletime</name>
+    <value>600000</value>
+  </property>
+</configuration>

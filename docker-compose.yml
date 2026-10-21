@@ -1,0 +1,115 @@
+# AEGIS local stack.
+#   Infrastructure:  docker compose up -d kafka hbase
+#   Pipeline:        docker compose up -d streaming producers api
+#   One-off jobs:    docker compose run --rm tools python -m spark_jobs.etl_pipeline
+# The project directory is mounted at /app, so code and data/ are shared with the host.
+name: aegis
+
+x-app: &app
+  image: aegis-spark:3.5.9
+  build:
+    context: .
+    dockerfile: docker/spark/Dockerfile
+  working_dir: /app
+  volumes:
+    - ./:/app
+  environment:
+    AEGIS__KAFKA__BOOTSTRAP_SERVERS: "kafka:29092"
+    AEGIS__HBASE__HOST: "hbase"
+    AEGIS__HBASE__PORT: "9090"
+    AEGIS_LOG_LEVEL: "INFO"
+  depends_on:
+    kafka:
+      condition: service_healthy
+    hbase:
+      condition: service_healthy
+
+services:
+  kafka:
+    image: apache/kafka:4.3.1
+    hostname: kafka
+    ports:
+      - "9092:9092"            # host clients (producers/tests on Windows): localhost:9092
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"
+      CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+    restart: unless-stopped
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+    mem_limit: 1g
+
+  hbase:
+    image: aegis-hbase:2.5.16
+    build:
+      context: docker/hbase
+    hostname: hbase
+    ports:
+      - "9090:9090"            # Thrift API (happybase)
+      - "16010:16010"          # HMaster web UI
+      - "9095:9095"            # Thrift info UI
+    volumes:
+      - hbase-data:/data
+    restart: unless-stopped     # recovers automatically if the master aborts
+    mem_limit: 2g
+
+  streaming:
+    <<: *app
+    command: ["python", "-m", "spark_jobs.streaming_pipeline"]
+    restart: unless-stopped     # a crashed driver resumes from its checkpoints
+    environment:
+      AEGIS__KAFKA__BOOTSTRAP_SERVERS: "kafka:29092"
+      AEGIS__HBASE__HOST: "hbase"
+      AEGIS__HBASE__PORT: "9090"
+      AEGIS_SPARK_UI: "1"
+    ports:
+      - "4040:4040"            # Spark UI (Structured Streaming tab)
+    stop_grace_period: 90s
+    mem_limit: 3g
+
+  producers:
+    <<: *app
+    command: ["python", "-m", "producers.run_all", "--rate", "4"]
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    mem_limit: 512m
+
+  api:
+    <<: *app
+    command: ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    mem_limit: 2g
+
+  tools:
+    <<: *app
+    profiles: ["tools"]
+    command: ["python", "-c", "print('use: docker compose run --rm tools <command>')"]
+    mem_limit: 4g
+
+volumes:
+  kafka-data:
+  hbase-data:

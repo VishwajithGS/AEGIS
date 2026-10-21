@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.egg-info/
+
+# Local tools / temp (portable JDK, pip/npm temp and cache)
+.tools/
+.tmp/
+.npm-cache/
+
+# Generated data, lake, checkpoints, models, reports (reproducible from the generator)
+data/generated/
+data/lake/
+data/checkpoints/
+data/state/
+data/reports/
+data/models/
+data/dead_letter/
+data/reference/
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.log
+
+# Docker virtual disks / VM images and OS/editor files
+*.vhdx
+*.vhd
+*.vmdk
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Optional local package cache for the Spark image build
+docker/spark/wheels/*
+!docker/spark/wheels/README.md
