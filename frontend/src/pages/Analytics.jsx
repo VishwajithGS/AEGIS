@@ -5,6 +5,7 @@ import {
 import { api } from "../services/api.js";
 import { useApi } from "../hooks/useApi.js";
 import { Card, Empty, ErrorBox, Loading, OriginBadge } from "../components/ui.jsx";
+import RealDataPanels from "../components/RealDataPanels.jsx";
 import { CATEGORY_COLORS, RISK_COLORS, fmt, fmtTime } from "../constants.js";
 
 export default function Analytics({ zones }) {
@@ -23,7 +24,7 @@ export default function Analytics({ zones }) {
           {[7, 14, 30, 60].map((d) => <option key={d} value={d}>last {d} days of the archive</option>)}</select></label>
         <label>Zone<select value={zone} onChange={(e) => setZone(e.target.value)}><option value="">whole region</option>
           {(zones || []).map((z) => <option key={z.zone_id}>{z.zone_id}</option>)}</select></label>
-        <OriginBadge origin="batch-historical" /> <span className="muted small">computed by the Spark batch ETL from the synthetic 60-day backfill</span>
+        <OriginBadge origin="batch-historical" /> <span className="muted small">computed by the Spark batch ETL from this data root's historical data (synthetic or real: see the Overview banner)</span>
       </div>
       <div className="grid-2">
         <Card title="Daily incidents and reports by category">
@@ -81,6 +82,7 @@ export default function Analytics({ zones }) {
           </ResponsiveContainer>
         </Card>
       </div>
+      <RealDataPanels real={data.real_data} />
       <Card title="Live stream trend" subtitle="per event-time window, latest assessment per zone (Structured Streaming output)">
         {!live.available ? <Empty>{live.reason}</Empty> : (
           <ResponsiveContainer width="100%" height={240}>

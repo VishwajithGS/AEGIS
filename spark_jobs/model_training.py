@@ -113,17 +113,22 @@ def evaluate(pred: DataFrame, labels: list[str], train_majority: Optional[str] =
            for m in ("accuracy", "weightedPrecision", "weightedRecall", "f1")}
     out["weighted_f1"] = out.pop("f1")
     support = {int(r["label_idx"]): int(r["count"]) for r in pred.groupBy("label_idx").count().collect()}
-    per_class = {}
-    for i, name in enumerate(labels):
-        per_class[name] = {
-            "precision": round(ev.setMetricName("precisionByLabel").setMetricLabel(float(i)).evaluate(pred), 4),
-            "recall": round(ev.setMetricName("recallByLabel").setMetricLabel(float(i)).evaluate(pred), 4),
-            "f1": round(ev.setMetricName("fMeasureByLabel").setMetricLabel(float(i)).evaluate(pred), 4),
-            "support": support.get(i, 0),
-        }
     cm = [[0] * len(labels) for _ in labels]
     for r in pred.groupBy("label_idx", "prediction").count().collect():
         cm[int(r["label_idx"])][int(r["prediction"])] = int(r["count"])
+    # Per-class scores from the confusion matrix with Spark's MulticlassMetrics definitions (0.0 when a
+    # denominator is 0). Spark's evaluator raises for a class absent from the test set; such a class has
+    # no defined recall, so its scores are reported as null with support 0.
+    per_class = {}
+    for i, name in enumerate(labels):
+        tp, predicted, actual = cm[i][i], sum(row[i] for row in cm), sum(cm[i])
+        if actual == 0:
+            per_class[name] = {"precision": None, "recall": None, "f1": None, "support": 0}
+            continue
+        p = tp / predicted if predicted else 0.0
+        rc = tp / actual
+        per_class[name] = {"precision": round(p, 4), "recall": round(rc, 4),
+                           "f1": round(2 * p * rc / (p + rc), 4) if p + rc else 0.0, "support": actual}
     out["per_class"] = per_class
     out["confusion_matrix"] = {"labels": labels, "rows_actual_cols_predicted": cm}
     out["test_rows"] = sum(support.values())

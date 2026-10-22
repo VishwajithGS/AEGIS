@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { api } from "../services/api.js";
 import { useApi } from "../hooks/useApi.js";
 import { Bar, Card, Empty, ErrorBox, KV, Loading, RiskBadge } from "../components/ui.jsx";
-import { fmt, fmtTime } from "../constants.js";
+import { dataMode, fmt, fmtTime } from "../constants.js";
 
 const DEFAULTS = { rain_3h_mm: 45, rain_max_1h_mm_hr: 28, level_ratio_max_3h: 0.9, humidity_avg_3h: 94,
   disrupted_ratio_1h: 0.4, speed_ratio_avg_1h: 0.5, reports_6h: 3, water_obs_available: 1, traffic_obs_available: 1 };
@@ -27,6 +27,9 @@ function Confusion({ cm }) {
 export default function ModelPanel({ zonesData }) {
   const status = useApi(() => api.modelStatus(), [], 15000);
   const preds = useApi(() => api.modelPredictions(), [], 30000);
+  const dataset = useApi(() => api.dataset(), [], 0);
+  const mode = dataMode(dataset.data);
+  const realMode = mode === "real-historical";
   const [form, setForm] = useState(DEFAULTS);
   const [zone, setZone] = useState("");
   const [result, setResult] = useState(null);
@@ -66,6 +69,20 @@ export default function ModelPanel({ zonesData }) {
   const ev = s.evaluation || {};
   return (
     <div className="page">
+      {realMode && (
+        <div className="banner real">
+          <strong>Real-data mode: no ML model is served.</strong> The project's model was trained on SYNTHETIC labels
+          from the simulator, and no verified real severity label exists for this region (DFO/GDACS severities describe
+          whole regional events, not zones or incidents), so the model is not applied to real data. See docs/ml_model.md, "Real-data audit".
+        </div>
+      )}
+      {mode === "hybrid" && (
+        <div className="banner hybrid">
+          <strong>Hybrid mode:</strong> this model is trained on SYNTHETIC incidents and SYNTHETIC severity labels,
+          simulated from the real ERA5 rainfall of the period. Its metrics show how well it recovers the simulator's
+          rule under real rainfall patterns, not real-world skill.
+        </div>
+      )}
       <div className="banner warn">
         Supporting ML component. Labels are <strong>{s.labels_are_synthetic === false ? "real" : "SYNTHETIC"}</strong> ({(s.label_provenance || "no model trained").replace(/^SYNTHETIC - /, "")}).
         Predictions are ML estimates of flood-incident severity, <strong>not observed severities and not official warnings</strong>, and are independent of the rule-based zone risk score.
@@ -138,7 +155,8 @@ export default function ModelPanel({ zonesData }) {
         </Card>
       </div>
       <Card title="Latest per-zone ML predictions" subtitle={preds.data && preds.data.zone_predictions ? `model ${preds.data.zone_predictions.model_version} · features as of ${fmtTime(preds.data.zone_predictions.features_as_of)} · source ${preds.data.zone_predictions.source}` : ""}>
-        {zonePreds.length === 0 ? <Empty>No zone predictions yet (run the inference job: scripts/train_model.ps1 -Infer).</Empty> : (
+        {zonePreds.length === 0 ? <Empty>{realMode ? "No zone predictions in real-data mode (no model is served)."
+          : "No zone predictions yet (run the inference job: scripts/train_model.ps1 -Infer)."}</Empty> : (
           <div className="chips">
             {zonePreds.slice().sort((a, b) => a.zone_id.localeCompare(b.zone_id)).map((p) => (
               <span key={p.zone_id} className="chip clickable" onClick={() => fillFromZone(p.zone_id)}>{p.zone_id}: <strong>{p.predicted_severity || "Insufficient data"}</strong></span>

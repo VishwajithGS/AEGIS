@@ -95,6 +95,8 @@ class ZoneService:
 
     # -- sources -------------------------------------------------------------
     def _from_hbase(self) -> tuple[dict, Optional[str]]:
+        if not self.hbase.enabled:          # deliberately off (e.g. real-data mode): not an error
+            return {}, None
         try:
             rows = self.hbase.latest_zone_risk([z.zone_id for z in self.grid.zones()])
             return {z: {k: _jsonish(v) for k, v in r.items()} for z, r in rows.items()}, None

@@ -107,6 +107,60 @@ versions show how one window's score evolved.
   batches and resume from the checkpoints (batch ids continue).
 * Watch the alerts feed when a storm cell passes (every ~20 min with default settings).
 
+## 10a. Real historical data (optional, 4 min)
+
+Shows the same pipeline on verified public data for Cyclone Michaung
+(2023-11-01 – 2023-12-30). Before the session, once (needs internet for
+the first step; later runs use the cache):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\ingest_real_data.ps1   # ERA5, IMD, NOAA gauge, DFO, GDACS -> data_real\
+powershell -ExecutionPolicy Bypass -File scripts\run_real_data.ps1      # ETL + real-data layers + API on :8001 (~2 min)
+```
+
+Terminal 3 (keep open): `powershell -ExecutionPolicy Bypass -File scripts\start_frontend.ps1 -RealData` → http://127.0.0.1:5174
+
+* `Get-Content data_real\dataset_manifest.json` → sources, licences, and the
+  list of what has **no** verified real source (water level, traffic,
+  reports, severity labels).
+* `Get-Content data_real\raw\historical\weather.jsonl -TotalCount 1` → a
+  real ERA5 record: `data_source`, `observation_type = reanalysis`,
+  `licence`, `"synthetic": false`.
+* Dashboard (5174) → **Overview**: green "Real historical data" banner with
+  the missing sources; every zone is **Insufficient data** because only
+  rainfall (30 % of the indicator weight) is observed. Point out that the
+  index refuses to treat missing sources as zero.
+* **Historical analytics** → IMD observed daily rainfall vs ERA5 (peak on
+  2023-12-04), the Minambakkam rain gauge, and the official DFO/GDACS events
+  table (regional events, not street incidents).
+* `Get-Content data_real\reports\real_data_validation.json` → source
+  agreement (ERA5 vs IMD r = 0.78; ERA5 22 % below IMD). This compares data
+  sources; it is not a model evaluation.
+* **ML model** tab in real mode: model unavailable — no real labels exist
+  (see `docs/ml_model.md`, "Real-data audit").
+
+## 10b. Hybrid mode: real rainfall + synthetic fill (optional, 4 min)
+
+Before the session, after step 10a's import (~6 min):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_hybrid_data.ps1    # synthetic fill driven by ERA5 + ETL + model + API :8002
+```
+
+Terminal 4 (keep open): `powershell -ExecutionPolicy Bypass -File scripts\start_frontend.ps1 -Hybrid` → http://127.0.0.1:5175
+
+* **Overview**: amber "Hybrid data" banner — which parts are real (rainfall,
+  events) and which are SYNTHETIC (water level, traffic, reports, incidents,
+  labels).
+* **Historical analytics**: simulated incidents and river levels peak on
+  4–5 December exactly when the real ERA5/IMD rain fell; the risk trend peaks
+  at ~73 (High). Compare with the real-only dashboard (5174), where the same
+  zones are "Insufficient data".
+* `Get-Content data_hybrid\raw\historical\water_level.jsonl -TotalCount 1` →
+  `"synthetic": true`, `"data_source": "aegis-simulator-era5-driven"`.
+* **ML model**: trained on the hybrid set; point out the caveat that the test
+  set has no Critical incident (one cyclone, time-based split).
+
 ## 11. Tests and end-to-end check
 
 ```powershell

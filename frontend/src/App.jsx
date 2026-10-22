@@ -10,7 +10,7 @@ import Analytics from "./pages/Analytics.jsx";
 import ModelPanel from "./pages/ModelPanel.jsx";
 import Pipeline from "./pages/Pipeline.jsx";
 import { Dot } from "./components/ui.jsx";
-import { timeAgo } from "./constants.js";
+import { MODE_TAGLINE, dataMode, timeAgo } from "./constants.js";
 
 const TABS = [
   ["overview", "Overview"], ["map", "Live map"], ["zones", "Zone risk"], ["incidents", "Incidents"],
@@ -47,6 +47,7 @@ export default function App() {
 
   // Shared zone data; refreshed on live updates (SSE) or every 30 s as a fallback.
   const zones = useApi(() => api.zones(), [refreshKey], 30000);
+  const dataset = useApi(() => api.dataset(), [], 0);
 
   useEffect(() => {
     api.alerts().then((d) => setAlerts(d.alerts || [])).catch(() => {});
@@ -71,12 +72,15 @@ export default function App() {
       <header className="topbar">
         <div className="brand">
           <span className="logo">AEGIS</span>
-          <span className="tagline">Real-time disaster intelligence & risk analytics · synthetic demo data</span>
+          <span className="tagline">Real-time disaster intelligence & risk analytics ·{" "}
+            {MODE_TAGLINE[dataMode(dataset.data)] || dataMode(dataset.data)}</span>
         </div>
         <div className="status">
           <span title="Server-Sent Events from the API (Kafka zone-risk-updates)">
-            <Dot ok={live.connected} /> live updates {live.connected ? "connected" : "offline (polling)"}
-            {live.lastEventAt ? ` · last event ${timeAgo(live.lastEventAt.toISOString())}` : ""}
+            {dataMode(dataset.data) !== "synthetic"
+              ? <>API {live.connected ? "connected" : "offline (polling)"} · no live feed in historical mode</>
+              : <><Dot ok={live.connected} /> live updates {live.connected ? "connected" : "offline (polling)"}
+                {live.lastEventAt ? ` · last event ${timeAgo(live.lastEventAt.toISOString())}` : ""}</>}
           </span>
           <span className="muted small">API {API_BASE}</span>
         </div>

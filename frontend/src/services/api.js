@@ -49,6 +49,7 @@ export const api = {
   alerts: () => request("/api/alerts"),
   modelStatus: () => request("/api/model/status"),
   modelPredictions: () => request("/api/model/predictions"),
+  dataset: () => request("/api/dataset"),
   predict: (body) => request("/api/model/predict", { method: "POST", body: JSON.stringify(body) }),
   streamUrl: () => `${API_BASE}/api/stream`,
 };

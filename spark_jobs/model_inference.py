@@ -117,7 +117,7 @@ def zone_feature_frame(spark: SparkSession, cfg: dict, source: str, as_of: Optio
     data. ``as_of_latest`` uses the end of the bucket holding the newest event for live data
     too (useful when the stream is paused, e.g. in the end-to-end check)."""
     from spark_jobs.features import point_in_time_features
-    from spark_jobs.risk_analytics import aggregate_signals, zone_signals
+    from spark_jobs.risk_analytics import aggregate_signals, reports_observed, zone_signals
     from spark_jobs.spatial_analytics import nearest_station_map, zones_df
     from spark_jobs.transforms import union_canonical, with_all_domain_columns
 
@@ -141,7 +141,7 @@ def zone_feature_frame(spark: SparkSession, cfg: dict, source: str, as_of: Optio
                 raise ModelUnavailable(f"no events in {base}")
             as_of = datetime.fromtimestamp((int(latest_us // 1_000_000) // bucket + 1) * bucket, timezone.utc)
     signals = zone_signals(canon, nearest_station_map(spark, cfg, "weather"), nearest_station_map(spark, cfg, "water_level"))
-    buckets = aggregate_signals(signals, f"{bucket} seconds")
+    buckets = aggregate_signals(signals, f"{bucket} seconds", reports_observed(cfg))
     reports = canon.filter((F.col("domain") == "incidents") & (F.col("source_type") == "public_report")
                            & F.col("zone_id").isNotNull() & (F.col("verification_status") != "rejected")) \
         .select("zone_id", "event_time")

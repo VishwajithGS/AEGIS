@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from backend.app.services.analytics_service import AnalyticsService
+from backend.app.services.dataset_service import DatasetService
 from backend.app.services.hbase_service import HBaseService
 from backend.app.services.incident_service import IncidentService
 from backend.app.services.live_feed import LiveFeed
@@ -25,6 +26,7 @@ class Services:
     model: ModelService
     feed: LiveFeed
     pipeline: PipelineService
+    dataset: DatasetService
 
 
 def build_services(settings: ApiSettings) -> Services:
@@ -38,6 +40,7 @@ def build_services(settings: ApiSettings) -> Services:
         zones=ZoneService(cfg, store, hbase, settings.live_stale_after_s, settings.cache_ttl_s),
         incidents=IncidentService(store, hbase), analytics=AnalyticsService(cfg, store), model=model, feed=feed,
         pipeline=PipelineService(cfg, store, hbase, feed, model, settings.live_stale_after_s),
+        dataset=DatasetService(cfg),
     )
 
 

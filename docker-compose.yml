@@ -104,6 +104,42 @@ services:
       - "8000:8000"
     mem_limit: 2g
 
+  # API over the REAL historical data root (data_real/, see docs/dataset_migration_plan.md).
+  # HBase, the Kafka live feed and model hosting are off so no synthetic live rows can appear.
+  api-real:
+    <<: *app
+    profiles: ["real"]
+    command: ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      AEGIS__STORAGE__DATA_ROOT: "data_real"
+      AEGIS__HBASE__ENABLED: "false"
+      AEGIS__RISK__REPORTS_OBSERVED: "false"
+      AEGIS_API_LIVE_FEED: "0"
+      AEGIS_API_MODEL: "0"
+      AEGIS_API_CORS_ORIGINS: "http://localhost:5174,http://127.0.0.1:5174"
+    depends_on: []
+    ports:
+      - "8001:8000"
+    mem_limit: 1g
+
+  # API over the HYBRID data root (data_hybrid/): real rainfall and events + SYNTHETIC water level,
+  # traffic, reports and incidents simulated from that rainfall (producers/hybrid_generator.py).
+  # Historical batch only: HBase and the Kafka live feed are off; the model trained on this root is served.
+  api-hybrid:
+    <<: *app
+    profiles: ["hybrid"]
+    command: ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      AEGIS__STORAGE__DATA_ROOT: "data_hybrid"
+      AEGIS__HBASE__ENABLED: "false"
+      AEGIS_API_LIVE_FEED: "0"
+      AEGIS_API_MODEL: "1"
+      AEGIS_API_CORS_ORIGINS: "http://localhost:5175,http://127.0.0.1:5175"
+    depends_on: []
+    ports:
+      - "8002:8000"
+    mem_limit: 2g
+
   tools:
     <<: *app
     profiles: ["tools"]

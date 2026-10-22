@@ -1,0 +1,69 @@
+%% AEGIS end-to-end architecture, layered top to bottom (source of docs/architecture.svg / .png).
+%% Detail: docs/runtime_sequence.mmd (start-up + one event) and docs/batch_ml_workflow.mmd (batch ETL + ML).
+%% Dashed arrows = optional or mode-specific paths.
+flowchart TB
+  classDef src fill:#e8eef7,stroke:#1f3b63,color:#0b1d33
+  classDef kafka fill:#fdeccf,stroke:#b8741a,color:#3d2400
+  classDef spark fill:#fde3dc,stroke:#b8452a,color:#3d1205
+  classDef store fill:#e3f1e6,stroke:#2f7a45,color:#0d2b15
+  classDef api fill:#ece6f6,stroke:#5b3f99,color:#1d0f3a
+  classDef ui fill:#e0f2f4,stroke:#1e7f8c,color:#062a2f
+
+  subgraph L1["1 · Data sources"]
+    direction LR
+    SIM["Synthetic simulator<br/>producers/world.py, data_generator.py"]:::src
+    REAL["Real historical datasets<br/>ERA5 · IMD · NOAA · DFO · GDACS"]:::src
+    HYB["Hybrid generator<br/>simulator driven by real ERA5 rain"]:::src
+  end
+
+  subgraph L2["2 · Ingestion"]
+    direction LR
+    PROD["Kafka producers<br/>producers/run_all.py<br/>acks=all, idempotent"]:::kafka
+    TOPICS["Kafka 4.3 source topics<br/>weather-events · water-level-events<br/>traffic-events · incident-reports"]:::kafka
+    FILES[("JSON-lines files<br/>historical backfill / imports")]:::store
+  end
+
+  subgraph L3["3 · Processing (Apache Spark 3.5)"]
+    direction LR
+    STREAM["Structured Streaming<br/>bronze_dq · silver · zone_risk<br/>watermark 10 min · 5-min windows"]:::spark
+    BATCH["Batch jobs<br/>ETL bronze to silver to gold · DQ report<br/>RDD · Spark SQL · spatial · MLlib"]:::spark
+  end
+
+  subgraph L4["4 · Storage"]
+    direction LR
+    DER["Kafka derived topics<br/>zone-risk-updates<br/>data-quality-events"]:::kafka
+    HB[("HBase 2.5<br/>5 wide-column tables")]:::store
+    LAKE[("Parquet lake<br/>bronze · silver · gold · live")]:::store
+    STATE[("State + model files<br/>status.json · flood_severity_dt")]:::store
+  end
+
+  subgraph L5["5 · Serving"]
+    API["FastAPI backend<br/>REST /api/* · SSE /api/stream"]:::api
+  end
+
+  subgraph L6["6 · Presentation"]
+    direction LR
+    UI["React + Vite dashboard<br/>Leaflet map · Recharts · 7 tabs"]:::ui
+    USER(("Reviewer")):::ui
+  end
+
+  SIM -->|"live events"| PROD
+  SIM -->|"60-day backfill"| FILES
+  REAL -->|"ingest CLI"| FILES
+  HYB -.->|"hybrid mode"| FILES
+  PROD -->|"JSON, key = source id"| TOPICS
+  TOPICS -->|"micro-batches every 10 s"| STREAM
+  FILES --> BATCH
+  STREAM --> DER
+  STREAM -->|"puts"| HB
+  STREAM -->|"appends"| LAKE
+  STREAM --> STATE
+  BATCH -->|"overwrites"| LAKE
+  BATCH -.->|"--write-hbase"| HB
+  BATCH -->|"model + reports"| STATE
+  DER -->|"consumer"| API
+  HB -->|"Thrift"| API
+  LAKE -->|"pyarrow"| API
+  STATE --> API
+  API -->|"JSON + Server-Sent Events"| UI
+  UI --> USER

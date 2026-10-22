@@ -54,9 +54,16 @@ def overview(s: Services = Depends(services)) -> dict:
                        "hbase_sink": pipe.get("hbase_sink"), "updated_at": pipe.get("updated_at")},
         "model": {"state": s.model.state, "version": s.model.latest_version()},
         "alerts": len(s.feed.recent_alerts()),
-        "data_origin_note": "live-stream = Structured Streaming output; batch-historical = batch ETL over the "
-                            "synthetic 60-day backfill.",
+        "dataset": s.dataset.info(),
+        "data_origin_note": s.dataset.origin_note(),
     }
+
+
+@router.get("/api/dataset", tags=["system"])
+def dataset(s: Services = Depends(services)) -> dict:
+    """Which data this API serves: the synthetic demo (default) or a real-data root,
+    with the sources, their licences and what is not available."""
+    return s.dataset.info()
 
 
 @router.get("/api/zones", tags=["zones"])

@@ -29,9 +29,9 @@ from pyspark.sql import functions as F
 from aegis.config import data_path, get_config
 from aegis.logging_config import setup_logging
 from spark_jobs import hbase_sink, transforms as TR
-from spark_jobs.common import DOMAINS, Timer, build_spark, lake, path_exists, reports_dir, write_json
+from spark_jobs.common import DOMAINS, Timer, build_spark, lake, path_exists, remove_dir, reports_dir, write_json
 from spark_jobs.features import point_in_time_features
-from spark_jobs.risk_analytics import aggregate_signals, hazard_index, score, zone_signals
+from spark_jobs.risk_analytics import aggregate_signals, hazard_index, reports_observed, score, zone_signals
 from spark_jobs.spatial_analytics import nearest_station_map, zones_df
 
 log = setup_logging("etl")
@@ -76,13 +76,27 @@ def load_stream_bronze(spark: SparkSession, cfg: dict) -> Optional[DataFrame]:
         F.lit("kafka").alias("origin"), F.col("kafka_offset").alias("source_seq"))
 
 
+def write_table(df: DataFrame, path: str, partition_by: Optional[str] = None, files: int = 1) -> int:
+    """Overwrite a Parquet table; an empty result still produces a readable,
+    schema-only table (real-data runs can lack whole domains). Returns the row count."""
+    n = df.count()
+    if n == 0:
+        remove_dir(path)
+        df.sparkSession.createDataFrame([], df.schema).coalesce(1).write.mode("overwrite").parquet(path)
+        return 0
+    w = (df.repartition(partition_by) if partition_by else df.coalesce(files)).write.mode("overwrite") \
+        .option("partitionOverwriteMode", "static")
+    (w.partitionBy(partition_by) if partition_by else w).parquet(path)
+    return n
+
+
 # ---------------------------------------------------------------------------
 # Gold builders
 # ---------------------------------------------------------------------------
 def build_zone_hourly(spark: SparkSession, cfg: dict, canon_valid: DataFrame) -> DataFrame:
     wmap = nearest_station_map(spark, cfg, "weather")
     lmap = nearest_station_map(spark, cfg, "water_level")
-    hourly = aggregate_signals(zone_signals(canon_valid, wmap, lmap), "1 hour")
+    hourly = aggregate_signals(zone_signals(canon_valid, wmap, lmap), "1 hour", reports_observed(cfg))
     return (hourly.withColumnRenamed("window_start", "hour").drop("window_end")
             .withColumn("rain_mm", F.round(F.col("rainfall_avg_mm_hr") * 1.0, 3))
             .withColumn("event_date", F.to_date("hour")))
@@ -191,7 +205,8 @@ def dq_report(canon: DataFrame, dedup_counts: dict, silver_counts: dict, raw_by_
         "input": {"raw_records": sum(raw_by_topic.values()), "by_topic": raw_by_topic, "unknown_topic": unknown_topic},
         "totals": grand, "domains": domains, "reconciliation": checks,
     }
-    if manifest:
+    report["data_mode"] = (manifest or {}).get("data_mode", "synthetic")
+    if manifest and "injected_anomalies" in manifest:
         file_reasons: dict = {}
         for r in (TR.reason_counts(canon.filter(F.col("origin").startswith("file:")))
                   .groupBy("reason").agg(F.sum("count").alias("n")).collect()):
@@ -206,6 +221,10 @@ def dq_report(canon: DataFrame, dedup_counts: dict, silver_counts: dict, raw_by_
             "duplicates are compared with records removed by event_id de-duplication.")
         report["reconciliation"].append({"check": "every injected defect detected with the expected reason",
                                          "passed": all(v["injected"] == v["detected"] for v in cmp.values())})
+    elif manifest:
+        report["reconciliation"].append({
+            "check": "every injected defect detected with the expected reason", "passed": None,
+            "detail": "not applicable: the input manifest records no injected defects (real or hybrid data)"})
     return report
 
 
@@ -239,12 +258,10 @@ def run(spark: SparkSession, cfg: dict, input_dir: Path, include_stream: bool = 
     silver_counts = {}
     for d in DOMAINS:
         view = TR.domain_view(dedup, d)
-        (view.repartition("event_date").write.mode("overwrite").option("partitionOverwriteMode", "static")
-         .partitionBy("event_date").parquet(lake(cfg, "silver", d)))
+        write_table(view, lake(cfg, "silver", d), partition_by="event_date")
         silver_counts[d] = spark.read.parquet(lake(cfg, "silver", d)).count()   # read back = verification
-    (TR.quarantine_view(canon, int(cfg["streaming"]["max_raw_value_chars"])).coalesce(4)
-     .write.mode("overwrite").option("partitionOverwriteMode", "static").partitionBy("domain")
-     .parquet(lake(cfg, "quarantine", "batch")))
+    write_table(TR.quarantine_view(canon, int(cfg["streaming"]["max_raw_value_chars"])),
+                lake(cfg, "quarantine", "batch"), partition_by="domain")
     log.info(f"silver written: {silver_counts}; duplicates removed: {dup_counts}")
 
     # ---- gold -------------------------------------------------------------
@@ -271,14 +288,14 @@ def run(spark: SparkSession, cfg: dict, input_dir: Path, include_stream: bool = 
 
     silver_inc = spark.read.parquet(lake(cfg, "silver", "incidents"))
     daily, hod = build_trends(silver_inc)
-    daily.coalesce(1).write.mode("overwrite").parquet(lake(cfg, "gold", "incident_daily"))
-    hod.coalesce(1).write.mode("overwrite").parquet(lake(cfg, "gold", "incident_hour_of_day"))
+    write_table(daily, lake(cfg, "gold", "incident_daily"))
+    write_table(hod, lake(cfg, "gold", "incident_hour_of_day"))
     corr, bands = build_correlations(zone_hourly)
-    corr.coalesce(1).write.mode("overwrite").parquet(lake(cfg, "gold", "traffic_hazard_correlation"))
-    bands.coalesce(1).write.mode("overwrite").parquet(lake(cfg, "gold", "rainfall_disruption_bands"))
+    write_table(corr, lake(cfg, "gold", "traffic_hazard_correlation"))
+    write_table(bands, lake(cfg, "gold", "rainfall_disruption_bands"))
 
     ml = build_ml_training(dedup, zone_hourly)
-    ml.coalesce(1).write.mode("overwrite").parquet(lake(cfg, "gold", "ml_training_flood_severity"))
+    write_table(ml, lake(cfg, "gold", "ml_training_flood_severity"))
     ml = spark.read.parquet(lake(cfg, "gold", "ml_training_flood_severity"))
     ml_rows = ml.count()
     label_dist = {r["label"]: int(r["count"]) for r in ml.groupBy("label").count().collect()}
@@ -306,9 +323,12 @@ def run(spark: SparkSession, cfg: dict, input_dir: Path, include_stream: bool = 
         {"check": "gold: risk_score within [0, 100]",
          "passed": (rs[0] is None or rs[0] >= 0) and (rs[1] is None or rs[1] <= 100),
          "detail": {"min": rs[0], "max": rs[1]}},
-        {"check": "gold: ML training set has >= model.min_rows rows and all 4 labels",
-         "passed": ml_rows >= int(cfg["model"]["min_rows"]) and len(label_dist) == 4,
-         "detail": {"rows": ml_rows, "labels": label_dist}},
+        ({"check": "gold: ML training set has >= model.min_rows rows and all 4 labels",
+          "passed": ml_rows >= int(cfg["model"]["min_rows"]) and len(label_dist) == 4,
+          "detail": {"rows": ml_rows, "labels": label_dist}} if report["data_mode"] in ("synthetic", "hybrid") else
+         {"check": "gold: ML training set has >= model.min_rows rows and all 4 labels", "passed": None,
+          "detail": f"not applicable in {report['data_mode']} mode: no verified incident severity labels "
+                    f"(see docs/dataset_migration_plan.md, ML audit); rows={ml_rows}"}),
     ]
     report["gold"] = {
         "zone_hourly_rows": zone_hourly.count(), "zone_risk_hourly_rows": risk_hourly.count(),
@@ -379,7 +399,7 @@ def main() -> None:
                       "injected_vs_detected": report.get("injected_vs_detected"),
                       "gold": report["gold"], "hbase": report.get("hbase")}, indent=2, default=str))
     spark.stop()
-    failed = [c["check"] for c in report["reconciliation"] if not c["passed"]]
+    failed = [c["check"] for c in report["reconciliation"] if c["passed"] is False]
     hbase_failed = args.write_hbase and (report.get("hbase") or {}).get("status") != "ok"
     if failed or hbase_failed:
         log.error(f"ETL finished with problems: failed checks={failed} hbase_load_failed={hbase_failed}")

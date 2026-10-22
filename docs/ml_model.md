@@ -184,3 +184,46 @@ for zones whose rainfall features are missing; the dashboard shows
 * Zones without gauges or traffic segments rely on imputed values (flagged by
   the availability features and listed in `imputed_features` for API predictions).
 * Live predictions use rescaled windows on time-compressed demo data and are illustrative only.
+* The numbers above are for the backfill alone. When the batch ETL also
+  ingests archived live-stream records whose wall-clock times overlap the end
+  of the backfill, the features of the newest incidents change and so do the
+  metrics (2026-10-22 e2e run: accuracy 0.660, weighted F1 0.643).
+  Regenerating the backfill (`scripts\generate_data.ps1`) after streaming has
+  run creates such an overlap.
+
+## Hybrid-mode model (2026-10-22)
+
+`scripts\run_hybrid_data.ps1` trains the same pipeline on `data_hybrid/`:
+real ERA5 rainfall as the weather features, and **synthetic** water level,
+traffic, reports, incidents and labels simulated from that rainfall (see
+[dataset_migration_plan.md](dataset_migration_plan.md) §5b). Labels still come
+from `severity_rule`, so they are synthetic.
+
+| Item | Value |
+|---|---|
+| Training set | 1,549 flood-related incidents (Low 490, Moderate 482, High 377, Critical 200) |
+| Split | time-based, cutoff 2023-12-05 06:47 UTC: 1,239 train / 310 test |
+| Test labels | Low 224, Moderate 85, High 1, **Critical 0** |
+| Accuracy / weighted F1 | 0.842 / 0.845 (majority baseline 0.274) |
+| Per-class F1 | Low 0.888, Moderate 0.741, High 0.0 (1 example), Critical not measurable |
+
+The period holds one cyclone, so a leakage-free time split puts almost all
+severe incidents in training. The score therefore says little about High or
+Critical cases and must not be compared with the synthetic-mode model. Per-class
+scores of a class absent from the test set are reported as `null` (support 0);
+earlier the evaluation crashed in that case.
+
+## Real-data audit (2026-10-22)
+
+Checked against every real source verified for the migration
+([dataset_migration_plan.md](dataset_migration_plan.md) §1 and §4).
+
+| Question | Finding |
+|---|---|
+| Is there a real label for this objective? | **No.** No verified open source gives Low/Moderate/High/Critical severity per incident or per zone-hour for Chennai |
+| Could DFO or GDACS serve as labels? | No. DFO `SEVERITY` (1 / 1.5 / 2) is one value per regional event (12 events since 1989 intersect the study box; each polygon covers all 40 zones at once). GDACS alert levels are per cyclone/flood event. Using either as a zone-level incident label would fabricate spatial detail |
+| Could the model be trained on real inputs with the synthetic labels? | No. The labels are computed from the simulator's hidden state; they do not exist for real days |
+| What happens in real-data mode? | The ETL builds **no** training set (0 rows; the "ML training set" data-quality check is reported as *not applicable*), the real-mode API runs with the model off (`AEGIS_API_MODEL=0`), and the dashboard's ML tab says the model is unavailable. Nothing synthetic is shown as a real prediction |
+| Do the existing metrics stay valid? | Only as a synthetic-label demonstration (accuracy 0.677 above). They say nothing about real-world skill |
+| A defensible real-data objective | Predict a zone's **IMD rainfall category for the next 24 h** (IMD's published classes: no rain < 2.5 mm, light 2.5–15.5, moderate 15.6–64.4, heavy 64.5–115.5, very heavy 115.6–204.4, extremely heavy ≥ 204.5 mm) from past ERA5/IMD values. This is a **proxy target derived from observed measurements with official thresholds**, not a flood-severity label, and it changes the model's objective. **Not implemented** — it needs the project owner's approval |
+| Data size for that objective | 60 days × 40 zones = 2,400 zone-days from only 3 IMD cells (effectively ~180 independent cell-days, one cyclone). A credible model would need several monsoon seasons (IMD offers 1901–2025) |

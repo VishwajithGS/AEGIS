@@ -3,12 +3,14 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 import { api } from "../services/api.js";
 import { useApi } from "../hooks/useApi.js";
 import { Bar, Card, Empty, ErrorBox, KV, Loading, OriginBadge, RiskBadge } from "../components/ui.jsx";
-import { RISK_COLORS, RISK_ORDER, fmt, fmtTime } from "../constants.js";
+import { RISK_COLORS, RISK_ORDER, dataMode, fmt, fmtTime } from "../constants.js";
 
 const FEATURE_COLOR = { rainfall: "#1565c0", water_level: "#00838f", incidents: "#6a1b9a", traffic: "#8d6e63", historical: "#546e7a" };
 
 function ZoneDetail({ zoneId, refreshKey }) {
   const { data, error, loading } = useApi(() => api.zone(zoneId), [zoneId, refreshKey]);
+  const dataset = useApi(() => api.dataset(), [], 0);
+  const realMode = dataMode(dataset.data) === "real-historical";
   if (loading && !data) return <Loading what={`zone ${zoneId}`} />;
   if (error) return <ErrorBox error={error} what={`zone ${zoneId}`} />;
   const a = data.assessment;
@@ -55,7 +57,9 @@ function ZoneDetail({ zoneId, refreshKey }) {
           <strong>{data.ml_prediction.predicted_severity || "Insufficient data"}</strong>{data.ml_prediction.prediction_status && data.ml_prediction.prediction_status !== "ok" ? ` (${data.ml_prediction.prediction_status})` : ""} · model {data.ml_prediction.model_version} · features as of {fmtTime(data.ml_prediction.features_as_of)}
           <div className="muted small">Model trained on SYNTHETIC labels. Not an observed severity and not a warning.</div>
         </div>
-      ) : <p className="muted small">No zone prediction yet (run the inference job).</p>}
+      ) : <p className="muted small">{realMode
+        ? "No ML model in real-data mode: no verified real severity labels exist (see the ML model tab)."
+        : "No zone prediction yet (run the inference job)."}</p>}
       <h4>Risk history</h4>
       {live.length > 0 && (
         <>

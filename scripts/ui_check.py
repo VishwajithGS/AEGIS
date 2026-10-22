@@ -30,16 +30,26 @@ TABS = [
     ("model", "Held-out evaluation"),
     ("pipeline", "Streaming queries"),
 ]
+# Real-historical data root (scripts/run_real_data.ps1): no trained model, real-data panels instead.
+REAL_MARKERS = {"overview": "Real historical data", "analytics": "Observed daily rainfall (IMD gridded)",
+                "model": "Model status"}
+# Hybrid data root (scripts/run_hybrid_data.ps1): real rainfall + synthetic fill, trained model, real-data panels.
+HYBRID_MARKERS = {"overview": "Hybrid data", "analytics": "Observed daily rainfall (IMD gridded)"}
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://127.0.0.1:5173")
     ap.add_argument("--out", default=str(ROOT / "data" / "reports" / "ui"))
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--real", action="store_true", help="dashboard serves the real-data root (scripts/run_real_data.ps1)")
+    mode.add_argument("--hybrid", action="store_true", help="dashboard serves the hybrid root (scripts/run_hybrid_data.ps1)")
     args = ap.parse_args()
+    markers = REAL_MARKERS if args.real else HYBRID_MARKERS if args.hybrid else {}
+    tabs = [(t, markers.get(t, m)) for t, m in TABS]
     from playwright.sync_api import Error as PwError, sync_playwright
 
-    out = Path(args.out)
+    out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     console_errors, failed_requests, results = [], [], []
     with sync_playwright() as p:
@@ -61,7 +71,7 @@ def main() -> int:
         page.on("requestfailed", lambda r: failed_requests.append(f"{r.method} {r.url} {r.failure}")
                 if "tile.openstreetmap" not in r.url and "/api/stream" not in r.url else None)
         page.goto(f"{args.url}/#overview", wait_until="domcontentloaded")
-        for tab, marker in TABS:
+        for tab, marker in tabs:
             t0 = time.time()
             rec = {"tab": tab, "marker": marker}
             try:

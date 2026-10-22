@@ -2,7 +2,13 @@ import React, { useState } from "react";
 import { api } from "../services/api.js";
 import { useApi } from "../hooks/useApi.js";
 import { Card, ErrorBox, Loading, OriginBadge } from "../components/ui.jsx";
-import { CATEGORY_COLORS, fmt, fmtInt, fmtTime } from "../constants.js";
+import { CATEGORY_COLORS, dataMode, fmt, fmtInt, fmtTime } from "../constants.js";
+
+const SUBTITLE = {
+  synthetic: "Archived incidents (batch, synthetic) and public reports (live stream + historical). Severity exists only for archived incidents.",
+  "real-historical": "Real-data mode: no verified open source of incidents or citizen reports exists, so this list is empty. Officially reported regional flood events are under Historical analytics.",
+  hybrid: "Hybrid mode: every incident and report here is SYNTHETIC, simulated from the real ERA5 rainfall of the period. Severity (synthetic label) exists only for archived incidents. Real regional flood events are under Historical analytics.",
+};
 
 const PAGE = 25;
 
@@ -11,6 +17,8 @@ export default function Incidents() {
   const [query, setQuery] = useState(f);
   const [offset, setOffset] = useState(0);
   const { data, error, loading } = useApi(() => api.incidents({ ...query, limit: PAGE, offset }), [query, offset], 30000);
+  const dataset = useApi(() => api.dataset(), [], 0);
+  const mode = dataMode(dataset.data);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const apply = (e) => {
     e.preventDefault();
@@ -19,7 +27,7 @@ export default function Incidents() {
   };
   return (
     <div className="page">
-      <Card title="Incident explorer" subtitle="Archived incidents (batch, synthetic) and public reports (live stream + historical). Severity exists only for archived incidents.">
+      <Card title="Incident explorer" subtitle={SUBTITLE[mode] || SUBTITLE.synthetic}>
         <form className="toolbar" onSubmit={apply}>
           <label>Category<select value={f.category} onChange={set("category")}><option value="">all</option>
             {Object.keys(CATEGORY_COLORS).map((c) => <option key={c}>{c}</option>)}</select></label>

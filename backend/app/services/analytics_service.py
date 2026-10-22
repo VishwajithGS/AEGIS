@@ -40,13 +40,16 @@ class AnalyticsService:
         out["daily_environment"] = _records(daily.round(3))
 
         inc = inc.copy()
-        inc["event_date"] = pd.to_datetime(inc["event_date"]).dt.strftime("%Y-%m-%d")
-        if days:
-            inc = inc[inc["event_date"] >= daily["event_date"].min()] if not daily.empty else inc
-        piv = inc.pivot_table(index="event_date", columns="category", values="incidents", aggfunc="sum",
-                              fill_value=0).reset_index().sort_values("event_date")
-        out["daily_incidents_by_category"] = _records(piv)
-        out["categories"] = [c for c in piv.columns if c != "event_date"]
+        if inc.empty:          # e.g. real-data mode: no incident source
+            out["daily_incidents_by_category"], out["categories"] = [], []
+        else:
+            inc["event_date"] = pd.to_datetime(inc["event_date"]).dt.strftime("%Y-%m-%d")
+            if days:
+                inc = inc[inc["event_date"] >= daily["event_date"].min()] if not daily.empty else inc
+            piv = inc.pivot_table(index="event_date", columns="category", values="incidents", aggfunc="sum",
+                                  fill_value=0).reset_index().sort_values("event_date")
+            out["daily_incidents_by_category"] = _records(piv)
+            out["categories"] = [c for c in piv.columns if c != "event_date"]
 
         risk = self.store.read("gold", "zone_risk_hourly", columns=["zone_id", "hour", "risk_category"])
         if risk is not None and not risk.empty:
@@ -58,17 +61,50 @@ class AnalyticsService:
                                fill_value=0).reset_index().sort_values("event_date")
             out["daily_zone_hours_by_risk_category"] = _records(rc)
         hod = self.store.read("gold", "incident_hour_of_day")
-        if hod is not None:
+        if hod is not None and not hod.empty:
             out["incidents_by_hour_of_day_ist"] = _records(hod.groupby("hour_of_day_ist")["incidents"].sum()
                                                            .reset_index().sort_values("hour_of_day_ist"))
         corr = self.store.read("gold", "traffic_hazard_correlation")
-        if corr is not None:
+        if corr is not None and not corr.empty:
             out["traffic_hazard_correlation_all"] = _records(corr[corr["zone_id"] == "ALL"])
         bands = self.store.read("gold", "rainfall_disruption_bands")
-        if bands is not None:
+        if bands is not None and not bands.empty:
             out["rainfall_disruption_bands"] = _records(bands.sort_values("rain_band"))
         out["live_trend"] = self.live_trend()
+        out["real_data"] = self.real_data(zone_id, daily["event_date"].min() if days and not daily.empty else None)
         out["available"] = True
+        return out
+
+    def real_data(self, zone_id: Optional[str] = None, since: Optional[str] = None) -> dict:
+        """Real-data layers (present only in a real-data root): observed daily rainfall
+        (IMD gridded, NOAA gauge) vs ERA5, source-agreement report, official events."""
+        z = self.store.read("gold", "real_daily_rainfall")
+        if z is None or z.empty:
+            return {"available": False}
+        z = z.copy()
+        z["date"] = pd.to_datetime(z["date"]).dt.strftime("%Y-%m-%d")
+        if since:
+            z = z[z["date"] >= since]
+        if zone_id:
+            z = z[z["zone_id"] == zone_id]
+        reg = (z.groupby("date").agg(imd_mm=("imd_mm", "mean"), era5_mm=("era5_mm", "mean"),
+                                     imd_max_mm=("imd_mm", "max")).reset_index().sort_values("date"))
+        out = {"available": True, "scope": zone_id or "region mean of 40 zones",
+               "daily_rainfall": _records(reg.round(2)),
+               "imd_category_counts": {k: int(v) for k, v in z["imd_category"].value_counts().items()}}
+        st = self.store.read("gold", "station_daily_rainfall")
+        if st is not None and not st.empty:
+            st = st.copy()
+            st["date"] = pd.to_datetime(st["date"]).dt.strftime("%Y-%m-%d")
+            if since:
+                st = st[st["date"] >= since]
+            out["gauge"] = {"station": str(st["station_name"].dropna().iloc[0]) if st["station_name"].notna().any() else None,
+                            "zone_id": str(st["zone_id"].iloc[0]),
+                            "daily": _records(st[["date", "gauge_mm", "imd_mm", "era5_mm"]].sort_values("date"))}
+        ev = self.store.read("gold", "official_events")
+        if ev is not None and not ev.empty:
+            out["official_events"] = _records(ev.sort_values("began", ascending=False))
+        out["validation"] = read_json(data_path(self.cfg, "reports_dir", "real_data_validation.json"))
         return out
 
     def live_trend(self, windows: int = 36) -> dict:

@@ -76,6 +76,69 @@ inclusive and defined in `aegis/canonical.py` (`RANGES`).
 | confidence | number | 0…1 | — | optional |
 | affected_road, affected_area_km2 | string, number | — | optional | area 0…500 km² |
 
+## 1a. Real historical data (`data_real/raw/historical/`, written by `aegis.realdata.ingest`)
+
+Every real record carries provenance: `data_source`, `observation_type`
+(`observation`, `observation_gridded`, `reanalysis`, `official_event`),
+`source_url`, `licence`, `retrieved_at` (UTC) and `"synthetic": false`.
+`event_id` is deterministic (source + location + time), so a re-import gives
+the same ids. Raw responses are kept in `data_real/raw/http_cache/` with a
+SHA-256 in `manifest.json`.
+
+### weather-events — `wx-era5-1` (`weather.jsonl`, ERA5 via Open-Meteo)
+
+| Field | Type | Unit / values | Notes |
+|---|---|---|---|
+| event_id, source_type (`weather`), schema_version | string | | |
+| source_id | string | `ERA5-<zone_id>` | one virtual station per zone centre |
+| event_time | string | ISO UTC (`Z`) | end of the accumulation hour |
+| lat, lon | number | degrees | zone centre (requested point) |
+| grid_lat, grid_lon, grid_elevation_m | number | degrees, m | ERA5 cell actually returned |
+| rainfall_mm_hr | number | mm in the hour ending at `event_time` | `accumulation` states this |
+| temperature_c, humidity_pct | number | °C, % | 2 m values |
+| data_source = `era5-open-meteo`, observation_type = `reanalysis` | | | model + assimilated observations, not a gauge |
+
+Mapped by `spark_jobs/transforms.py` into the canonical weather columns
+(`condition` = `unknown`, not invented).
+
+### daily rainfall — `rf-daily-1` (`rainfall_daily.jsonl`; batch layer only, not a Kafka topic)
+
+| Field | Type | Unit / values | Notes |
+|---|---|---|---|
+| source_id | string | `IMD-<lat>N-<lon>E` or `GHCND-IN020040900` | |
+| zone_id, date | string | `Z-R..-C..`, `YYYY-MM-DD` | |
+| window_start, window_end, window_convention | string | ISO UTC | 24 h from 03:00 UTC (08:30 IST) on `date` — **assumed**, see §5 validation |
+| rainfall_mm_day | number | mm | NULL = no report (GHCN-D gaps kept) |
+| imd_category | string | no_rain, light, moderate, heavy, very_heavy, extremely_heavy | derived from IMD's thresholds |
+| grid_lat, grid_lon, cell_distance_km | number | | IMD only: nearest valid land cell |
+| station_name, quality_flag, source_flag | string | | GHCN-D only |
+| data_source | string | `imd-gridded-0.25` (`observation_gridded`), `noaa-ghcnd` (`observation`) | |
+
+### official events — `ev-official-1` (`official_events.jsonl`)
+
+| Field | Type | Notes |
+|---|---|---|
+| source_event_id, event_kind, name | string | `DFO-<id>` / `GDACS-<type>-<id>`; flood, tropical_cyclone |
+| began, ended | string | ISO UTC |
+| severity_class, severity_label | number, string | DFO only: 1 large, 1.5 very large, 2 extreme |
+| alert_level, alert_score, severity_text | string, number, string | GDACS only |
+| dead, displaced, main_cause, affected_area_km2, glide, country | | as published |
+| centroid_lat, centroid_lon, distance_to_region_km | number | |
+| spatial_scope, intersects_study_box | string, boolean | DFO polygons are regional; buffered matches have `false` |
+| data_source | string | `dfo-flood-archive`, `gdacs` (`official_event`) |
+
+### Hybrid data root (`data_hybrid/`, written by `producers.hybrid_generator`)
+
+Same files as above (`weather.jsonl`, `rainfall_daily.jsonl`,
+`official_events.jsonl` copied unchanged from `data_real/`) plus
+`water_level.jsonl` (`wl-1`), `traffic.jsonl` (`tr-1`) and `incidents.jsonl`
+(`pr-1` reports and `hi-1` archived incidents) in the synthetic formats of §1.
+Every synthetic line has `"synthetic": true`,
+`data_source = aegis-simulator-era5-driven` and `observation_type = synthetic`.
+`reference/stations.json` combines the real ERA5 virtual weather stations with
+the synthetic gauges and road segments; `dataset_manifest.json` has
+`data_mode = hybrid`, `real_parts` and `synthetic_parts`.
+
 ## 2. Canonical (silver) columns
 
 Common to every silver table (`lake/silver/<domain>`, `lake/silver_stream/<domain>`):
@@ -84,11 +147,13 @@ Common to every silver table (`lake/silver/<domain>`, `lake/silver_stream/<domai
 |---|---|---|
 | event_id | string | unique per table after de-duplication |
 | source_type, source_id, schema_version | string | provenance |
+| data_source | string | `aegis-simulator` for synthetic-mode records; `aegis-simulator-era5-driven` for hybrid synthetic records; real source id (e.g. `era5-open-meteo`) otherwise; `unknown` if neither |
+| observation_type | string | `synthetic`, `reanalysis`, `observation`, … ; `unknown` if not stated |
 | event_time | timestamp (UTC) | when the observation/report happened |
 | event_date | date | partition column (UTC date of event_time) |
 | lat, lon | double | NULL when absent; invalid coordinates are rejected |
 | zone_id | string | analysis grid cell `Z-R<row>-C<col>`; NULL without coordinates |
-| is_synthetic | boolean | always true here |
+| is_synthetic | boolean | true for simulator records, false for real records |
 | dq_flags | array<string> | non-fatal quality flags (see §4) |
 | origin | string | `kafka` or `file:<name>` |
 | ingest_time | timestamp | Kafka record timestamp (NULL for files) |
@@ -166,4 +231,8 @@ Domain columns:
 | gold/dq_report | batch run | JSON report (also `data/reports/dq_report_batch.json`) |
 | live/zone_risk | zone × 5-min window × update | streaming risk assessments (`data_origin = live-stream`) |
 | live/dq_metrics | micro-batch | records, valid, rejected, detail JSON |
+| gold/real_daily_rainfall (real mode) | zone × date | imd_mm, imd_category, imd_cell, cell_distance_km, era5_mm / era5_hours (assumed window), era5_mm_alt / era5_hours_alt (window ending on the date), era5_category, era5_minus_imd_mm, era5_complete_day |
+| gold/station_daily_rainfall (real mode) | gauge × date | station_id, station_name, gauge_mm, gauge_category, quality_flag, imd_mm, imd_cell, era5_mm(_alt), era5_hours(_alt) |
+| gold/official_events (real mode) | event | the `ev-official-1` fields above |
+| reports/real_data_validation.json (real mode) | run | source agreement (pairs, correlation, mean difference, MAE, totals) for ERA5 vs IMD, gauge vs IMD and gauge vs ERA5 under both day alignments; category agreement; heavy days; wettest days |
 | live/ml_predictions | zone × inference run | features, predicted_severity (NULL when no weather observation in the window), probabilities, prediction_status (`ok` / `insufficient_data: …`), model_version, features_as_of |

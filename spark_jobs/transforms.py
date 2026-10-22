@@ -43,23 +43,25 @@ RAW_SCHEMAS = {
                 "event_time", "ts_ms", "lat", "lon")
         + [T.StructField("location", T.StructType(_fields("latitude", "longitude")))]
         + _fields("temperature_c", "humidity_pct", "rainfall_mm_hr", "condition",
-                  "temp_f", "rh_pct", "precip_in_hr", "sky", CORRUPT)),
+                  "temp_f", "rh_pct", "precip_in_hr", "sky", "data_source", "observation_type", CORRUPT)),
     "water_level": T.StructType(_fields(
         "event_id", "source_type", "source_id", "schema_version", "synthetic", "event_time", "lat", "lon",
         "river_id", "station_name", "water_level", "unit", "danger_level", "danger_level_unit",
-        "sensor_status", CORRUPT)),
+        "sensor_status", "data_source", "observation_type", CORRUPT)),
     "traffic": T.StructType(_fields(
         "event_id", "source_type", "source_id", "schema_version", "synthetic", "event_time", "segment_id",
-        "lat", "lon", "vehicle_density", "avg_speed_kmph", "free_flow_speed_kmph", "disruption", CORRUPT)),
+        "lat", "lon", "vehicle_density", "avg_speed_kmph", "free_flow_speed_kmph", "disruption", "data_source",
+        "observation_type", CORRUPT)),
     "incidents": T.StructType(_fields(
         "event_id", "source_type", "source_id", "schema_version", "synthetic", "event_time", "report_id",
         "incident_id", "lat", "lon", "category", "severity", "description", "channel",
-        "verification_status", "confidence", "affected_road", "affected_area_km2", CORRUPT)),
+        "verification_status", "confidence", "affected_road", "affected_area_km2", "data_source",
+        "observation_type", CORRUPT)),
 }
 
 COMMON_COLUMNS = [
     "domain", "event_id", "source_type", "source_id", "schema_version", "event_time", "event_date",
-    "lat", "lon", "zone_id", "is_synthetic", "dq_flags", "reasons", "is_valid",
+    "lat", "lon", "zone_id", "is_synthetic", "data_source", "observation_type", "dq_flags", "reasons", "is_valid",
     "topic", "origin", "kafka_partition", "kafka_offset", "source_seq", "ingest_time", "processing_time", "raw_value",
 ]
 DOMAIN_COLUMNS = {
@@ -74,7 +76,8 @@ DOMAIN_COLUMNS = {
 }
 # Columns persisted in silver tables (raw payload and Kafka bookkeeping excluded).
 SILVER_COMMON = ["event_id", "source_type", "source_id", "schema_version", "event_time", "event_date",
-                 "lat", "lon", "zone_id", "is_synthetic", "dq_flags", "origin", "ingest_time", "processing_time"]
+                 "lat", "lon", "zone_id", "is_synthetic", "data_source", "observation_type", "dq_flags", "origin",
+                 "ingest_time", "processing_time"]
 
 
 def topic_domains(cfg: dict) -> dict[str, str]:
@@ -332,6 +335,11 @@ def canonicalize(df_raw: DataFrame, domain: str, cfg: dict) -> DataFrame:
         F.when(valid_coords, lon).alias("lon"),
         zone_id_col(F.when(valid_coords, lat), F.when(valid_coords, lon), grid).alias("zone_id"),
         (F.lower(j["synthetic"]) == "true").alias("is_synthetic"),
+        # Provenance: real records state their source; synthetic ones are tagged as simulator output.
+        F.coalesce(j["data_source"], F.when(F.lower(j["synthetic"]) == "true", F.lit("aegis-simulator")),
+                   F.lit("unknown")).alias("data_source"),
+        F.coalesce(j["observation_type"], F.when(F.lower(j["synthetic"]) == "true", F.lit("synthetic")),
+                   F.lit("unknown")).alias("observation_type"),
         _non_null(flags).alias("dq_flags"),
         reasons.alias("reasons"),
         (F.size(reasons) == 0).alias("is_valid"),

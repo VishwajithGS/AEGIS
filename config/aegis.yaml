@@ -104,6 +104,9 @@ hbase:
 # values chosen for this project, not validated hazard-science parameters.
 # ---------------------------------------------------------------------
 risk:
+  # true: a citizen-report source exists, so "no report" in a window is an observed zero.
+  # false (real-data runs without reports): the incidents indicator is "not observed".
+  reports_observed: true
   features:
     rainfall:
       weight: 0.30

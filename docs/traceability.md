@@ -16,7 +16,7 @@ estimated; every number comes from a run whose command is listed.
 
 | # | Requirement | Implementation | Demonstration command | Test | Evidence (actual run) | Status |
 |---|---|---|---|---|---|---|
-| 1 | Python | `aegis/`, `producers/`, `spark_jobs/`, `backend/`, `hbase/`, `scripts/` | any script | whole suite | 97/97 tests pass in the container; 55/55 host unit tests | VERIFIED |
+| 1 | Python | `aegis/`, `producers/`, `spark_jobs/`, `backend/`, `hbase/`, `scripts/` | any script | whole suite | 97/97 tests pass in the container; 55/55 host unit tests (2026-10-21). After the real-data migration and hybrid mode (2026-10-22): 138/138 container tests, 90/90 host unit tests | VERIFIED |
 | 2 | Semi-structured data | JSON events, 6 schema versions, nested fields (`producers/formats.py`) | `Get-Content data\generated\historical\weather.jsonl -TotalCount 3` | `test_transforms.py` | both weather vendor formats (°F, in/hr, epoch ms, nested location) map to one canonical schema | VERIFIED |
 | 3 | Streaming data | Kafka producers + Structured Streaming | `scripts\start_producers.ps1`, `scripts\start_streaming.ps1` | `test_streaming_live.py` | continuous run at 4 events/s for >30 min; sent 11,713 / delivered 11,712 (1 in flight) / failed 0 | VERIFIED |
 | 4 | Time-series data | UTC event time from 3 timestamp styles, 5-min stream windows, hourly/daily gold tables, LAG trends, moving averages | `scripts\run_batch_analytics.ps1 -Only sql` | `test_transforms.py`, `test_pipeline_jobs.py` | q3 6-hour windows, q4 LAG trend, q7 3-day moving average returned rows; 56,346 zone-hours | VERIFIED |
@@ -54,6 +54,19 @@ run 2026-10-21 15:18 UTC on the final code: **14 PASS, 0 FAIL, 0 BLOCKED, 0 SKIP
 | 13 inference | single record → High; 39/40 zones predicted from live data (Low 17 · Moderate 12 · High 10 · 1 insufficient data) |
 | 14 API | every endpoint 200; 39 zones served as `live-stream` from HBase |
 
+Re-run after the real-data migration, 2026-10-22 13:28 UTC: first attempt
+13 PASS, 1 FAIL (step 14 `ReadTimeout`, fixed — see "Problems found" below);
+second attempt **14 PASS, 0 FAIL, 0 BLOCKED, 0 SKIPPED**. Step 08: 411,430
+records (backfill + ~1 day of archived stream), 9/9 checks, every injected
+defect detected. Step 12: accuracy 0.660, weighted F1 0.643 — lower than
+0.677 because the backfill had been regenerated on 2026-10-21 16:35 UTC and
+its last hours now overlap archived live-stream records, which change the
+features of the newest incidents. On the backfill alone
+(`etl_pipeline --no-stream-bronze` + `model_training`) the model reproduces
+accuracy 0.6767, weighted F1 0.6637 and the per-class scores exactly, so the
+migration did not change the synthetic results. Step 14: all endpoints 200 in
+18 s.
+
 ## Scripts executed
 
 All 12 PowerShell entry-point scripts (plus the shared `common.ps1`) were run as documented and exited 0: `setup.ps1 -HostVenv`,
@@ -80,10 +93,33 @@ reached pipeline status `ok` with no issues.
 | HBase aborted after a 42 s host pause (memory pressure; 40 s ZooKeeper session cap) | Spark resource caps, 120 s ZooKeeper sessions, auto-restart; connect retries; ETL exits 1 if the requested HBase load fails |
 | One streaming outage could exhaust restart attempts | back-off and counter reset |
 | `run_e2e.ps1` would share checkpoints with a running streaming service | script pauses/restores `streaming` and `producers` |
+| 2026-10-22: e2e step 14 FAIL (`ReadTimeout`) after ~1 day of streaming: `/api/overview` 75 s, `/api/pipeline/status` 82 s. pyarrow directory discovery stats every file (~5 ms each on the Windows bind mount) and ~10,000 micro-batch files had accumulated | `ParquetStore` lists files with `os.walk`, builds the dataset from that list (pyarrow's own Hive inference, same schema), reads fragments in parallel and remembers per-file row counts: overview 19 s cold / 8 s warm, pipeline status 4 s / 1.4 s; regression tests `tests/unit/test_parquet_store.py` |
+| 2026-10-22: hybrid model training crashed (`NoSuchElementException: key not found: 3.0`) — the time-split test set had no Critical incident and Spark's per-label evaluator fails for an absent class | per-class scores computed from the confusion matrix with Spark's formulas (verified identical on the synthetic model: all 12 values equal); absent classes reported as `null` with support 0 |
+
+## Real-data migration (2026-10-22)
+
+Requirements of the dataset-audit brief and where each is met. Details and
+numbers: [dataset_audit.md](dataset_audit.md),
+[dataset_migration_plan.md](dataset_migration_plan.md).
+
+| Requirement | Implementation | Command | Test | Evidence (actual run) | Status |
+|---|---|---|---|---|---|
+| Audit every synthetic dataset | `docs/dataset_audit.md` (15 datasets/artefacts) | — | — | every generator output, fixture and derived artefact listed with its consumers | DONE |
+| Verify real sources | `docs/dataset_migration_plan.md` §1 | requests listed per row | — | 19 candidates checked from this machine: 5 used (ERA5, IMD, GHCN-D, DFO, GDACS); 2 verified but not implemented (SACHET, GloFAS); 3 verified but rejected or cross-check only (ISD-Lite, Meteostat, NASA POWER); 4 blocked by accounts/keys (IMERG, Global Flood Database, ReliefWeb, data.gov.in); 2 unreachable (India-WRIS, mausam.imd.gov.in); CWC without an open API; no open source for traffic or citizen reports | VERIFIED |
+| Mapping with feasibility classes | plan §2 (D/C/P/X/N) | — | — | rainfall/temperature/humidity **C**; daily rainfall and events **X**; water level **P/X**; traffic, reports, severity labels **N** | DONE |
+| Ingestion layer: configurable, idempotent, provenance | `aegis/realdata/` (`common`, `era5`, `daily_rainfall`, `events`, `netcdf3`, `ingest`) | `scripts\ingest_real_data.ps1` | `tests/unit/test_realdata.py` (25) | 57,600 + 2,460 + 26 records; SHA-256 per response; re-run byte-identical; failed download exits 2, nothing substituted | VERIFIED |
+| Existing pipeline unchanged in contract | ERA5 as `wx-era5-1` in the weather family; `data_source` / `observation_type` columns added | `scripts\run_real_data.ps1` | `tests/spark/test_realdata_pipeline.py` (5) | ETL 57,600 valid / 0 rejected; checks PASS or not applicable | VERIFIED |
+| Missing sources not treated as safe | `risk.reports_observed=false`; hazard index NULL without archive | as above | `test_missing_report_source_is_not_observed`, `test_hazard_index_is_null_without_incident_archive` | 57,600/57,600 zone-hours "Insufficient data" | VERIFIED |
+| Real and synthetic never mixed | separate `data_real/` root, manifest `data_mode`, real-mode API with HBase / live feed / model off | `docker compose --profile real up -d api-real` | `tests/unit/test_api_realmode.py` (3) | `/api/dataset` = `real-historical`; pipeline status `ok` without false "unreachable" issues | VERIFIED |
+| Dashboard labels the mode | banner, header tagline, real-data panels | `scripts\start_frontend.ps1 -RealData` | `scripts\ui_check.py --real` | 7/7 tabs PASS, 0 console errors, 0 failed requests; screenshots `data_real\reports\ui\` | VERIFIED |
+| ML: no fabricated labels | ML audit in `docs/ml_model.md` | — | DQ check "ML training set" = not applicable in real mode | no real label exists; proxy objective proposed, not implemented | DONE (decision pending) |
+| Hybrid mode: fill the missing sources with synthetic data (owner's request) | `producers/hybrid_generator.py` (simulator driven by real ERA5 rainfall), `data_hybrid/`, `api-hybrid` :8002, dashboard :5175 | `scripts\run_hybrid_data.ps1` | `tests/unit/test_hybrid.py` (5), `test_etl_in_hybrid_mode_scores_zones_and_keeps_provenance` | 282,408 records, 0 rejected, all applicable checks PASS; 0 zone-hours "Insufficient data", risk peak 73.5 on 2023-12-04; model trained (test set lacks Critical, documented); dashboard 7/7 | VERIFIED |
+| Synthetic mode still works | — | `scripts\run_e2e.ps1`, `scripts\ui_check.py` | full suite | e2e 14/14 PASS (after the lake-reader fix, see "End-to-end"); backfill-only ML reproduces 0.677 exactly; synthetic dashboard 7/7 | VERIFIED |
 
 ## Known limitations (not fixed, documented)
 
-Synthetic data only; single-node deployment; at-least-once delivery (no
+Synthetic mode uses simulated data; real mode is historical batch only and
+lacks real water level, traffic, reports and severity labels; single-node deployment; at-least-once delivery (no
 end-to-end exactly-once); events older than the watermark do not update live
 windows; streaming latency ~20 s per micro-batch on the Windows bind mount;
 ML "High" class recall 0.28; ~8 GB Docker memory needed for the full stack.

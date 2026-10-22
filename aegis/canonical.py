@@ -10,7 +10,7 @@ from __future__ import annotations
 # Source formats
 # ---------------------------------------------------------------------------
 SCHEMA_VERSIONS = {
-    "weather": ["wx-metric-1", "wx-imperial-2"],
+    "weather": ["wx-metric-1", "wx-imperial-2", "wx-era5-1"],   # wx-era5-1 = real ERA5 reanalysis (aegis/realdata)
     "water_level": ["wl-1"],
     "traffic": ["tr-1"],
     "public_report": ["pr-1"],

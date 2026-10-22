@@ -23,12 +23,12 @@ SENSOR_SPEC = {
                     "disruption_level", "is_disrupted"],
     "location": ["lat", "lon", "zone_id", "segment_id", "river_id", "station_name"],
     "metadata": ["event_id", "domain", "source_type", "source_id", "schema_version", "event_time_iso",
-                 "ingest_time_iso", "dq_flags", "origin", "is_synthetic"],
+                 "ingest_time_iso", "dq_flags", "origin", "is_synthetic", "data_source", "observation_type"],
 }
 INCIDENT_SPEC = {
     "incident": ["incident_id", "event_id", "category", "category_raw", "severity", "description", "source_type",
                  "source_id", "schema_version", "event_time_iso", "channel", "affected_road", "affected_area_km2",
-                 "is_flood_related", "is_synthetic"],
+                 "is_flood_related", "is_synthetic", "data_source", "observation_type"],
     "location": ["lat", "lon", "zone_id", "has_location"],
     "verification": ["verification_status", "confidence", "report_weight", "dq_flags"],
 }

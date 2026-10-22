@@ -1,0 +1,35 @@
+%% AEGIS batch ETL and ML training workflow (spark_jobs/etl_pipeline.py, model_training.py, model_inference.py)
+flowchart TD
+  classDef in fill:#e8eef7,stroke:#1f3b63,color:#0b1d33
+  classDef step fill:#fde3dc,stroke:#b8452a,color:#3d1205
+  classDef out fill:#e3f1e6,stroke:#2f7a45,color:#0d2b15
+  classDef check fill:#fdeccf,stroke:#b8741a,color:#3d2400
+
+  F["Generated / real JSON-lines<br/>weather · water_level · traffic · incidents"]:::in
+  KB["Archived Kafka records<br/>lake/bronze/kafka_raw (optional)"]:::in
+  F --> BR["Bronze: raw text + topic + origin<br/>lake/bronze/files"]:::step
+  KB --> BR
+  BR --> CAN["transforms.canonicalize()<br/>parse · map units/time/categories · zone_id<br/>12 rejection codes · DQ flags"]:::step
+  CAN -->|"is_valid = false"| Q["lake/quarantine/batch<br/>(reasons, raw payload)"]:::out
+  CAN -->|"is_valid = true"| DD["dedup_batch(): first arrival per event_id"]:::step
+  DD --> SIL["Silver: lake/silver/{domain}<br/>partitioned by event_date"]:::out
+  SIL --> ZS["zone_signals(): nearest-station join (Haversine)<br/>aggregate_signals('1 hour')"]:::step
+  ZS --> ZH["gold/zone_hourly"]:::out
+  ZH --> HZ["gold/zone_hazard_history<br/>historical_hazard_index"]:::out
+  ZH --> RS["risk_analytics.score()<br/>aegis.risk.assess as UDF"]:::step
+  HZ --> RS
+  RS --> RH["gold/zone_risk_hourly · gold/zone_daily"]:::out
+  SIL --> TR["incident_daily · incident_hour_of_day<br/>traffic_hazard_correlation · rainfall_disruption_bands"]:::out
+  SIL --> PIT["features.point_in_time_features()<br/>3 h / 1 h / 6 h look-back, no leakage"]:::step
+  ZH --> PIT
+  PIT --> MLT["gold/ml_training_flood_severity<br/>9 features + SYNTHETIC label"]:::out
+  CAN --> DQ["dq_report(): records = valid + rejected,<br/>injected = detected, unique ids, risk in [0,100]"]:::check
+  DQ --> DQR["reports/dq_report_batch.json<br/>gold/dq_report"]:::out
+  MLT --> VAL["validate_training_frame()<br/>forbidden features · ≥ 200 rows · labels"]:::check
+  VAL --> SPL["time_split(): newest 20 % = test"]:::step
+  SPL --> PIPE["Pipeline: Imputer(median) → VectorAssembler<br/>→ DecisionTreeClassifier(depth 6) → IndexToString"]:::step
+  PIPE --> EV["evaluate(): accuracy, weighted F1,<br/>per-class, confusion matrix, majority baseline"]:::check
+  PIPE --> SAVE["models/flood_severity_dt/{version}/pipeline<br/>+ metadata.json · latest.json"]:::out
+  SAVE --> RL["reload check: same predictions on 25 rows"]:::check
+  SAVE --> INF["model_inference: --example · --zones<br/>API POST /api/model/predict"]:::step
+  INF --> PR["live/ml_predictions · state/ml_zone_predictions_latest.json<br/>HBase model_predictions"]:::out

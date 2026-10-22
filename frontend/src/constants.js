@@ -43,3 +43,11 @@ export const timeAgo = (iso) => {
 };
 
 export const riskColor = (a) => RISK_COLORS[(a && a.risk_category) || "No assessment"] || RISK_COLORS["No assessment"];
+
+// Data mode served by the API (/api/dataset): "synthetic" (default), "real-historical" or "hybrid".
+export const dataMode = (dataset) => (dataset && dataset.data_mode) || "synthetic";
+export const MODE_TAGLINE = {
+  synthetic: "synthetic demo data",
+  "real-historical": "real historical data",
+  hybrid: "hybrid: real rainfall + synthetic fill",
+};

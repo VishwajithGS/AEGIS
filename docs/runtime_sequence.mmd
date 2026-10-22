@@ -1,0 +1,42 @@
+%% AEGIS runtime: (A) start-up order, (B) one weather event from simulator to dashboard.
+sequenceDiagram
+  autonumber
+  participant Op as Operator (PowerShell scripts)
+  participant K as Kafka (KRaft)
+  participant H as HBase + Thrift
+  participant P as producers.run_all
+  participant S as spark_jobs.streaming_pipeline
+  participant A as FastAPI (backend.app.main)
+  participant B as Browser (React dashboard)
+
+  Note over Op,B: A · Start-up (scripts/start_infrastructure.ps1 → start_streaming → start_producers → start_api → start_frontend)
+  Op->>K: docker compose up -d kafka (wait for healthcheck)
+  Op->>H: docker compose up -d hbase (wait for healthcheck)
+  Op->>K: python -m producers.kafka_admin create (6 topics × 3 partitions)
+  Op->>H: python hbase/create_tables.py (5 tables)
+  Op->>S: docker compose up -d streaming
+  S->>H: ensure_tables() — HBase sink enabled or disabled
+  S->>K: subscribe weather/water-level/traffic/incident topics (offsets from checkpoints)
+  Op->>P: docker compose up -d producers (checks broker + topics)
+  Op->>A: docker compose up -d api (LiveFeed consumer + model loader threads)
+  A->>K: subscribe zone-risk-updates, data-quality-events (latest)
+  Op->>B: npm run dev (Vite, port 5173)
+  B->>A: GET /api/dataset, /api/zones, /api/overview and open EventSource /api/stream
+
+  Note over Op,B: B · One weather observation
+  P->>P: Simulator.weather() → formats.weather_event (wx-metric-1, +05:30 time)
+  P->>K: produce(weather-events, key=WXM-02, value=JSON) — acks=all
+  K-->>P: delivery callback (or dead-letter file)
+  S->>K: micro-batch every 10 s (≤ 20 000 offsets)
+  S->>S: bronze_dq: archive raw → canonicalize() → quarantine invalid → DQ metrics
+  S->>S: silver: is_valid → withWatermark(10 min) → dropDuplicatesWithinWatermark(event_id)
+  S->>H: put sensor_observations row WXM-02 · event_ts_ms · event_id
+  S->>S: zone_risk: WXM-02 feeds Z-R04-C02/C03/C04 → 5-min window per zone → aegis.risk.assess (UDF)
+  S->>H: put zone_risk_history row Z-R04-C02 · live · window_start_ms
+  S->>K: produce zone-risk-updates (key = zone_id, value = JSON assessment)
+  K-->>A: LiveFeed consumer receives update (High/Critical → dashboard alert)
+  A-->>B: SSE event: zone_risk (debounced reload after 3 s)
+  B->>A: GET /api/zones
+  A->>H: latest zone_risk_history row per zone (reverse prefix scan)
+  A-->>B: zones + assessment (data_origin, stale, contributions)
+  B->>B: Leaflet rectangle recoloured, Overview and Zone risk tabs update

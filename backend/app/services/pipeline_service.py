@@ -105,17 +105,25 @@ class PipelineService:
             except Exception:  # noqa: BLE001
                 metrics = {}
         issues = []
-        if not kafka["available"]:
-            issues.append("Kafka unreachable")
-        if not hb.get("available"):
-            issues.append("HBase unreachable")
-        if not stream.get("running"):
-            issues.append("streaming job not running (live data may be stale)")
+        from backend.app.services.dataset_service import DatasetService
+        mode = DatasetService(self.cfg).info().get("data_mode", "synthetic")
+        if mode == "synthetic":
+            if not kafka["available"]:
+                issues.append("Kafka unreachable")
+            if not hb.get("available"):
+                issues.append("HBase unreachable")
+            if not stream.get("running"):
+                issues.append("streaming job not running (live data may be stale)")
         for n, q in (stream.get("queries") or {}).items():
             if q.get("status") == "failed":
                 issues.append(f"streaming query {n} failed: {q.get('error')}")
         overall = "ok" if not issues else ("down" if not kafka["available"] and not hb.get("available") else "degraded")
+        if mode != "synthetic":
+            overall = "ok" if not issues else "degraded"
         return {"generated_at": datetime.now(timezone.utc).isoformat(), "overall": overall, "issues": issues,
+                "data_mode": mode,
+                "mode_note": None if mode == "synthetic" else
+                f"historical {mode} mode: Kafka, HBase and streaming are not used by this API instance",
                 "services": {"kafka": kafka, "hbase": hb, "streaming": stream, "live_feed": feed,
                              "model": {k: model.get(k) for k in ("state", "reason", "version")}},
                 "producers": self.producers(), "lake_row_counts": counts, "hbase_processing_metrics": metrics,

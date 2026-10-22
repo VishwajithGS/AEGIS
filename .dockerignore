@@ -9,3 +9,5 @@ frontend/
 .tools/
 .tmp/
 .npm-cache/
+data_real/
+data_hybrid/

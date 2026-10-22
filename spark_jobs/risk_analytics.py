@@ -80,7 +80,27 @@ def zone_signals(canon_valid: DataFrame, weather_map: Optional[DataFrame],
             .unionByName(i, allowMissingColumns=True))
 
 
-def signal_aggregations() -> list[Column]:
+def reports_observed(cfg: dict) -> bool:
+    """True when a report source exists, so "no report" is an observed zero.
+    False for real-data runs without any report feed: the incidents indicator is
+    then *not observed* (NULL) instead of an assumed zero (config risk.reports_observed)."""
+    return bool(cfg["risk"].get("reports_observed", True))
+
+
+def signal_aggregations(reports_observed: bool = True) -> list[Column]:
+    if reports_observed:
+        # Reports are counted, so "no report" is an observed zero (see docs: risk model).
+        report_aggs = [
+            F.round(F.coalesce(F.sum("report_weight"), F.lit(0.0)), 2).alias("weighted_reports"),
+            F.coalesce(F.sum("is_report"), F.lit(0)).cast("long").alias("reports"),
+            F.coalesce(F.sum("is_flood_report"), F.lit(0)).cast("long").alias("flood_reports"),
+        ]
+    else:
+        report_aggs = [
+            F.lit(None).cast("double").alias("weighted_reports"),
+            F.lit(None).cast("long").alias("reports"),
+            F.lit(None).cast("long").alias("flood_reports"),
+        ]
     return [
         F.round(F.avg("rainfall_mm_hr"), 3).alias("rainfall_avg_mm_hr"),
         F.round(F.max("rainfall_mm_hr"), 3).alias("rainfall_max_mm_hr"),
@@ -91,20 +111,17 @@ def signal_aggregations() -> list[Column]:
         F.round(F.avg("disrupted"), 4).alias("disrupted_ratio"),
         F.round(F.avg("speed_ratio"), 4).alias("speed_ratio_avg"),
         F.count("disrupted").alias("traffic_obs"),
-        # Reports are counted, so "no report" is an observed zero (see docs: risk model).
-        F.round(F.coalesce(F.sum("report_weight"), F.lit(0.0)), 2).alias("weighted_reports"),
-        F.coalesce(F.sum("is_report"), F.lit(0)).cast("long").alias("reports"),
-        F.coalesce(F.sum("is_flood_report"), F.lit(0)).cast("long").alias("flood_reports"),
+        *report_aggs,
         F.coalesce(F.sum("is_archived_incident"), F.lit(0)).cast("long").alias("archived_incidents"),
         F.coalesce(F.sum("is_archived_flood"), F.lit(0)).cast("long").alias("archived_flood_incidents"),
         F.count(F.lit(1)).alias("signal_count"),
     ]
 
 
-def aggregate_signals(signals: DataFrame, bucket: str) -> DataFrame:
+def aggregate_signals(signals: DataFrame, bucket: str, reports_observed: bool = True) -> DataFrame:
     """Tumbling event-time buckets per zone; ``bucket`` like '1 hour' or '5 minutes'."""
     return (signals.groupBy(F.window("event_time", bucket).alias("w"), "zone_id")
-            .agg(*signal_aggregations())
+            .agg(*signal_aggregations(reports_observed))
             .select("zone_id", F.col("w.start").alias("window_start"), F.col("w.end").alias("window_end"),
                     "rainfall_avg_mm_hr", "rainfall_max_mm_hr", "weather_obs", "humidity_avg",
                     "level_ratio_max", "water_obs", "disrupted_ratio", "speed_ratio_avg", "traffic_obs",
@@ -135,11 +152,14 @@ def score(df: DataFrame, cfg: dict) -> DataFrame:
 
 
 def hazard_index(archived_flood_by_zone: DataFrame) -> DataFrame:
-    """historical_hazard_index = zone's archived flood-related incidents / max over zones."""
+    """historical_hazard_index = zone's archived flood-related incidents / max over zones.
+
+    With no archived incident at all (e.g. a real-data run without an incident
+    archive) the index is NULL = not observed, never 0 (missing is not "safe")."""
     mx = archived_flood_by_zone.agg(F.max("archived_flood_incidents")).first()[0] or 0
     return archived_flood_by_zone.withColumn(
         "historical_hazard_index",
-        F.round(F.col("archived_flood_incidents") / F.lit(float(mx)), 4) if mx else F.lit(0.0))
+        F.round(F.col("archived_flood_incidents") / F.lit(float(mx)), 4) if mx else F.lit(None).cast("double"))
 
 
 def main() -> None:

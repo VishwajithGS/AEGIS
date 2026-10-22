@@ -48,3 +48,7 @@ Thumbs.db
 # Optional local package cache for the Spark image build
 docker/spark/wheels/*
 !docker/spark/wheels/README.md
+
+# Real-data root (downloaded sources, lake, reports): reproducible via aegis.realdata.ingest
+data_real/
+data_hybrid/

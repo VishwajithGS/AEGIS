@@ -43,7 +43,12 @@ file, `config/aegis.yaml`, overridable with `AEGIS__SECTION__KEY` variables.
 
 ## Data sources
 
-All sources are **synthetic** (see `producers/world.py`): a moving-storm rain
+AEGIS has three data roots, each labelled: `data/` (synthetic, default,
+described here), `data_real/` (real historical, see
+[Real historical data mode](#real-historical-data-mode) below) and
+`data_hybrid/` (real rainfall + synthetic fill, see [Hybrid mode](#hybrid-mode)).
+
+In synthetic mode all sources come from the simulator (see `producers/world.py`): a moving-storm rain
 field, river levels driven by accumulated rain, traffic slowed by rain and
 flooding, and incidents sampled from hazard-dependent rates. Every record
 carries `"synthetic": true`. Heterogeneity is deliberate:
@@ -58,6 +63,42 @@ carries `"synthetic": true`. Heterogeneity is deliberate:
 The historical backfill (60 days, ~297k raw records) is written as JSON-lines
 files that stand in for cold storage. The generator records every injected
 defect in `manifest.json` so the ETL's detection can be verified exactly.
+
+### Real historical data mode
+
+```
+ERA5 (Open-Meteo) ┐  aegis.realdata.ingest
+IMD gridded       │  validate · units · UTC · provenance
+NOAA GHCN-D       ├─▶ deterministic ids · SHA-256 cache ─▶ data_real/raw/historical
+DFO archive       │                                              │
+GDACS             ┘                                              ├─▶ etl_pipeline (same code) ─▶ silver/weather ─▶ gold zone_hourly, zone_risk_hourly
+                                                                 └─▶ real_data_layers ─▶ gold real_daily_rainfall, station_daily_rainfall,
+                                                                                          official_events + reports/real_data_validation.json
+data_real/lake ─▶ api-real (:8001; HBase, live feed and model off) ─▶ dashboard (:5174)
+```
+
+* ERA5 records are a new schema version (`wx-era5-1`) of the existing weather
+  family, so `transforms.py`, the ETL, risk, SQL and RDD jobs process them
+  unchanged; every canonical row now carries `data_source` and
+  `observation_type`.
+* Daily rainfall and official events are not Kafka topics; they only feed the
+  batch real-data layers.
+* Real mode is selected by environment overrides (`AEGIS__STORAGE__DATA_ROOT=data_real`,
+  `AEGIS__RISK__REPORTS_OBSERVED=false`, `AEGIS__HBASE__ENABLED=false`); Kafka
+  topics, HBase tables and the synthetic lake are not touched.
+* No live stream in real mode. Replaying real history through Kafka is
+  possible but not implemented (it would need a "historical replay" label).
+
+### Hybrid mode
+
+`producers/hybrid_generator.py` builds a third data root, `data_hybrid/`:
+the real files of `data_real/` plus synthetic water level, traffic, reports
+and incidents from the unchanged simulator, whose rain field
+(`Environment.rain`) is replaced by the real ERA5 value of the zone and hour.
+The same batch ETL, risk, real-data layers and MLlib jobs run on it, and
+`api-hybrid` (:8002, HBase and live feed off, model on) serves it to the
+dashboard (:5175). Provenance columns keep real and synthetic rows apart in
+every silver table.
 
 ## Kafka design
 

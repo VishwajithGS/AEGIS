@@ -59,6 +59,9 @@ main { flex: 1; padding: 16px 22px; }
 .banner { border-radius: 8px; padding: 10px 14px; font-size: 13px; }
 .banner.info { background: #e8f0fe; border: 1px solid #c5d6f8; }
 .banner.warn { background: #fff4e5; border: 1px solid #ffd59a; }
+.banner.real { background: #e8f5e9; border: 1px solid #a5d6a7; }
+.banner.real ul, .banner.hybrid ul { margin: 6px 0 0 18px; padding: 0; }
+.banner.hybrid { background: #fff8e1; border: 1px solid #ffcc80; }
 .banner.ok { background: #e8f5e9; border: 1px solid #b9e0bd; }
 .error-box { background: #fdecea; border: 1px solid #f5c2bd; color: #8a1c13; border-radius: 8px; padding: 10px 12px; font-size: 13px; margin: 8px 0; }
 .loading, .empty { padding: 24px; color: var(--muted); text-align: center; }

@@ -54,7 +54,7 @@ from aegis.logging_config import setup_logging
 from aegis.storage.hbase_repository import HBaseRepository, HBaseUnavailable, metric_row_key
 from spark_jobs import hbase_sink, transforms as TR
 from spark_jobs.common import DOMAINS, build_spark, checkpoint, lake, path_exists, remove_dir, write_json
-from spark_jobs.risk_analytics import score, signal_aggregations, zone_signals
+from spark_jobs.risk_analytics import reports_observed, score, signal_aggregations, zone_signals
 from spark_jobs.spatial_analytics import nearest_station_map
 
 log = setup_logging("streaming")
@@ -422,7 +422,7 @@ class Pipeline:
             else:
                 agg = (zone_signals(dedup, self.wmap, self.lmap)
                        .groupBy(F.window("event_time", self.cfg["streaming"]["window_duration"]).alias("w"), "zone_id")
-                       .agg(*signal_aggregations())
+                       .agg(*signal_aggregations(reports_observed(self.cfg)))
                        .select("zone_id", F.col("w.start").alias("window_start"), F.col("w.end").alias("window_end"),
                                *[c for c in ("rainfall_avg_mm_hr", "rainfall_max_mm_hr", "weather_obs", "humidity_avg",
                                              "level_ratio_max", "water_obs", "disrupted_ratio", "speed_ratio_avg",
